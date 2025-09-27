@@ -74,20 +74,18 @@ jobs:
             GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
 
           # 3. Create a minimal ExportOptions.plist to force no codesigning for ad-hoc export
-          cat <<EOF > ExportOptions.plist
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key>
-    <string>ad-hoc</string>
-    <key>signingStyle</key>
-    <string>manual</string>
-    <key>stripSwiftSymbols</key>
-    <true/>
-</dict>
-</plist>
-EOF
+          echo '<?xml version="1.0" encoding="UTF-8"?>' > ExportOptions.plist
+          echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> ExportOptions.plist
+          echo '<plist version="1.0">' >> ExportOptions.plist
+          echo '<dict>' >> ExportOptions.plist
+          echo '    <key>method</key>' >> ExportOptions.plist
+          echo '    <string>ad-hoc</string>' >> ExportOptions.plist
+          echo '    <key>signingStyle</key>' >> ExportOptions.plist
+          echo '    <string>manual</string>' >> ExportOptions.plist
+          echo '    <key>stripSwiftSymbols</key>' >> ExportOptions.plist
+          echo '    <true/>' >> ExportOptions.plist
+          echo '</dict>' >> ExportOptions.plist
+          echo '</plist>' >> ExportOptions.plist
 
           # 4. Export the unsigned IPA from the archive
           echo "Starting IPA Export..."
