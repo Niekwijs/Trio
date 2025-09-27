@@ -1,35 +1,37 @@
-stages:
-  - build
+jobs:
+  build_ipa: # This is your job's ID
+    name: Build IPA
+    runs-on: macos-latest
+    
+    # 'stage' isn't a top-level key in GitHub Actions; it's implicit 
+    # that steps run sequentially within a job.
+    
+    steps: # Jobs in GitHub Actions have 'steps', not 'script' directly at the job level
+      - uses: actions/checkout@v4 # Essential step to get your code
+      
+      - name: Select Xcode version
+        run: sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer
+        # Note: You need to ensure this path is correct for the runner's available Xcode versions.
 
-variables:
-  LANG: "en_US.UTF-8"
-  LC_ALL: "en_US.UTF-8"
+      - name: Install dependencies
+        run: bundle install
 
-# Main build job
-build_ipa:
-  stage: build
-  runs-on: macos-latest
-  script:
-    - echo "⚙️ Selecting Xcode version"
-      # adjust depending on what your runner has installed
-    - sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer
+      - name: Build IPA (unsigned)
+        run: | # Use a multi-line pipe for complex commands
+          bundle exec fastlane gym \
+            --scheme "Trio" \
+            --workspace "Trio.xcworkspace" \
+            --configuration Release \
+            --export_method ad-hoc \
+            --skip_codesigning true \
+            --output_directory build \
+            --output_name app.ipa
 
-    - echo "📦 Installing dependencies"
-    - bundle install
-
-    - echo "🔨 Building IPA (unsigned)"
-    - bundle exec fastlane gym \
-        --scheme "Trio" \
-        --workspace "Trio.xcworkspace" \
-        --configuration Release \
-        --export_method ad-hoc \
-        --skip_codesigning true \
-        --output_directory build \
-        --output_name app.ipa
-
-    - echo "✅ Build finished. IPA at build/app.ipa"
-
-  artifacts:
-    paths:
-      - build/app.ipa
-    expire_in: 1 week
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-ipa
+          path: build/app.ipa
+          retention-days: 7 # GitHub Actions uses 'retention-days' instead of 'expire_in' for artifacts
+          
+# The 'artifacts' key is replaced by the 'actions/upload-artifact' step.
