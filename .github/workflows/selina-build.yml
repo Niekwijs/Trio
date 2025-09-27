@@ -49,9 +49,6 @@ jobs:
       - name: Install CocoaPods (Global)
         run: sudo gem install cocoapods
 
-      - name: Install CocoaPods Dependencies
-        run: pod install --repo-update
-        
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
 
