@@ -55,11 +55,11 @@ jobs:
             -configuration Release \
             -archivePath "build-output/Trio.xcarchive" \
             -derivedDataPath $DERIVED_DATA_PATH \
-            SKIP_INSTALL=NO \
-            BUILD_LIBRARIES_FOR_DISTRIBUTION=YES \
+            -skipUnavailableActions YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
+
 
           # Create ExportOptions.plist using echo
           echo '<?xml version="1.0" encoding="UTF-8"?>' > ExportOptions.plist
