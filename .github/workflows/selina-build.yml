@@ -57,7 +57,9 @@ jobs:
             -derivedDataPath $DERIVED_DATA_PATH \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
+            GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0" \
+            RUN_SWIFTFORMAT=NO \
+            SWIFT_FORMAT_ENABLED=NO
 
           # Create ExportOptions.plist using echo
           echo '<?xml version="1.0" encoding="UTF-8"?>' > ExportOptions.plist
