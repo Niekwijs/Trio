@@ -1,92 +1,86 @@
 name: Simplified Trio Build (No Fastlane/Sync)
 run-name: Build Trio - ${{ github.ref_name }}
 on:
-  workflow_dispatch: # Allows manual trigger from the GitHub UI
+  workflow_dispatch:
 
-# Define environment variables used by xcodebuild or scripts
 env:  
-  # Set the target branch to the branch that triggered the workflow (e.g., 'main' or 'dev')
-  TARGET_BRANCH: ${{ github.ref_name }} 
-  # Set locales needed for Ruby/Pods
+  TARGET_BRANCH: ${{ github.ref_name }}
   LANG: "en_US.UTF-8"
   LC_ALL: "en_US.UTF-8"
+  DERIVED_DATA_PATH: build-output/DerivedData
 
 jobs:
   build:
     name: Build Unsigned IPA
-    # Use the requested macos runner version
-    runs-on: macos-15 
+    runs-on: macos-15
     permissions:
       contents: write
-    
+
     steps:
       - name: Select Xcode version
-        # Ensure the correct Xcode version is selected for compatibility
         run: sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer
 
-      - name: Checkout Repo and Submodules (CRITICAL)
+      - name: Checkout Repo and Submodules
         uses: actions/checkout@v4
         with:
-          # CRITICAL: Need recursive to clone LoopKit and related dependencies
-          submodules: recursive 
+          submodules: recursive
           ref: ${{ env.TARGET_BRANCH }}
 
       # --- Customization and Dependency Setup ---
-      
-      - name: Customize Trio (Apply Patches)
+      - name: Apply Trio Patches
         run: |
           echo "Applying patches..."
-          # Trio workspace patches
           if $(ls ./patches/* &> /dev/null); then
             git apply ./patches/* --allow-empty -v --whitespace=fix
           fi
-          # Note: Removed template lines for external curl/git apply commands
 
       - name: Install Ruby Gems (Bundler)
-        # Installs gems including fastlane (if still in Gemfile) and CocoaPods
-        run: bundle install 
-      
+        run: bundle install
+
       - name: Install CocoaPods (Global)
         run: sudo gem install cocoapods
+
 
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
 
-      # --- Core Build Process (Direct xcodebuild) ---
+      - name: Clean DerivedData
+        run: rm -rf $DERIVED_DATA_PATH
 
+      # --- Core Build Process ---
       - name: Xcode Build, Archive, and IPA Export (Unsigned)
         run: |
-          # 1. Create output directory
           mkdir -p build-output
 
-          # 2. Archive the project (skipping codesigning)
           echo "Starting Xcode Archive..."
           xcodebuild clean archive \
-            -workspace Trio.xcworkspace \
+            -workspace ios/Trio.xcworkspace \
             -scheme Trio \
             -configuration Release \
             -archivePath "build-output/Trio.xcarchive" \
+            -derivedDataPath $DERIVED_DATA_PATH \
             SKIP_INSTALL=NO \
             BUILD_LIBRARIES_FOR_DISTRIBUTION=YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
 
-          # 3. Create a minimal ExportOptions.plist to force no codesigning for ad-hoc export
-          echo '<?xml version="1.0" encoding="UTF-8"?>' > ExportOptions.plist
-          echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> ExportOptions.plist
-          echo '<plist version="1.0">' >> ExportOptions.plist
-          echo '<dict>' >> ExportOptions.plist
-          echo '    <key>method</key>' >> ExportOptions.plist
-          echo '    <string>ad-hoc</string>' >> ExportOptions.plist
-          echo '    <key>signingStyle</key>' >> ExportOptions.plist
-          echo '    <string>manual</string>' >> ExportOptions.plist
-          echo '    <key>stripSwiftSymbols</key>' >> ExportOptions.plist
-          echo '    <true/>' >> ExportOptions.plist
-          echo '</dict>' >> ExportOptions.plist
-          echo '</plist>' >> ExportOptions.plist
+          # ExportOptions.plist
+          cat > ExportOptions.plist <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>ad-hoc</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>stripSwiftSymbols</key>
+    <true/>
+</dict>
+</plist>
+EOF
 
-          # 4. Export the unsigned IPA from the archive
           echo "Starting IPA Export..."
           xcodebuild -exportArchive \
             -archivePath "build-output/Trio.xcarchive" \
@@ -95,21 +89,20 @@ jobs:
             -allowProvisioningUpdates \
             -allowUntrustedProvisioning
 
-          # 5. Locate and rename the IPA for artifact upload
           IPA_NAME=$(find build-output/ipa -name "*.ipa")
           if [ -z "$IPA_NAME" ]; then
-            echo "ERROR: IPA file not found after export."
+            echo "ERROR: IPA file not found."
             exit 1
           fi
           mv "$IPA_NAME" "build-output/Trio.ipa"
           echo "✅ Unsigned IPA created at build-output/Trio.ipa"
-      
-      # --- Artifact Upload ---
 
-      - name: Upload Build artifacts
+      # --- Artifact Upload ---
+      - name: Upload Build Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: built-ipa-and-logs
-          # path: buildlog is removed as no specific logging tool is running to generate it
-          path: build-output/Trio.ipa
+          path: |
+            build-output/Trio.ipa
+            build-output/Trio.xcarchive
