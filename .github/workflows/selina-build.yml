@@ -9,8 +9,6 @@ variables:
 build_ipa:
   stage: build
   runs-on: macos-latest
-  tags:
-    - macos   # <-- Your GitLab runner must be tagged with macOS
   script:
     - echo "⚙️ Selecting Xcode version"
       # adjust depending on what your runner has installed
