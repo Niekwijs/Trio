@@ -1,0 +1,37 @@
+stages:
+  - build
+
+variables:
+  LANG: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
+
+# Main build job
+build_ipa:
+  stage: build
+  runs-on: macos-latest
+  tags:
+    - macos   # <-- Your GitLab runner must be tagged with macOS
+  script:
+    - echo "⚙️ Selecting Xcode version"
+      # adjust depending on what your runner has installed
+    - sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer
+
+    - echo "📦 Installing dependencies"
+    - bundle install
+
+    - echo "🔨 Building IPA (unsigned)"
+    - bundle exec fastlane gym \
+        --scheme "Trio" \
+        --workspace "Trio.xcworkspace" \
+        --configuration Release \
+        --export_method ad-hoc \
+        --skip_codesigning true \
+        --output_directory build \
+        --output_name app.ipa
+
+    - echo "✅ Build finished. IPA at build/app.ipa"
+
+  artifacts:
+    paths:
+      - build/app.ipa
+    expire_in: 1 week
