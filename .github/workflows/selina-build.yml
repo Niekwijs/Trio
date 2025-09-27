@@ -1,51 +1,318 @@
-name: CI/CD Build
+name: 4. Build Trio
+run-name: Build Trio (${{ github.ref_name }})
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
-# Your existing variables moved to the environment context for a GitHub Action job
-env:
-  LANG: "en_US.UTF-8"
-  LC_ALL: "en_US.UTF-8"
+  ## Remove the "#" sign from the beginning of the line below to get automated builds on push (code changes in your repository)
+  #push:
+
+  schedule:
+    - cron: "0 8 * * 3" # Checks for updates at 08:00 UTC every Wednesday
+    - cron: "0 6 1 * *" # Builds the app on the 1st of every month at 06:00 UTC
+
+env:  
+  UPSTREAM_REPO: nightscout/Trio
+  UPSTREAM_BRANCH: ${{ github.ref_name }} # branch on upstream repository to sync from (replace with specific branch name if needed)
+  TARGET_BRANCH: ${{ github.ref_name }} # target branch on fork to be kept in sync, and target branch on upstream to be kept alive (replace with specific branch name if needed)
+  ALIVE_BRANCH_MAIN: alive-main
+  ALIVE_BRANCH_DEV: alive-dev
 
 jobs:
-  build_ipa: # This is your job's ID
-    name: Build IPA
-    runs-on: macos-latest
-    
-    # 'stage' isn't a top-level key in GitHub Actions; it's implicit 
-    # that steps run sequentially within a job.
-    
-    steps: # Jobs in GitHub Actions have 'steps', not 'script' directly at the job level
-      - uses: actions/checkout@v4 # Essential step to get your code
+  # The following dependency jobs (check_certs, check_alive_and_permissions, check_latest_from_upstream) 
+  # are kept as they manage the environment and upstream sync, which is independent of Fastlane.
+
+  # Checks if Distribution certificate is present and valid, optionally nukes and
+  # creates new certs if the repository variable ENABLE_NUKE_CERTS == 'true'
+  check_certs:  
+    name: Check certificates
+    uses: ./.github/workflows/create_certs.yml
+    secrets: inherit
+
+  # Checks if GH_PAT holds workflow permissions
+  # Checks for existence of alive branch; if non-existent creates it
+  check_alive_and_permissions:
+    needs: check_certs
+    runs-on: ubuntu-latest
+    name: Check alive branch and permissions
+    permissions:
+      contents: write
+    outputs:
+      WORKFLOW_PERMISSION: ${{ steps.workflow-permission.outputs.has_permission }}
+
+    steps:
+      - name: Check for workflow permissions
+        id: workflow-permission
+        env:
+          TOKEN_TO_CHECK: ${{ secrets.GH_PAT }}
+        run: |
+          PERMISSIONS=$(curl -sS -f -I -H "Authorization: token ${{ env.TOKEN_TO_CHECK }}" https://api.github.com | grep ^x-oauth-scopes: | cut -d' ' -f2-);
+
+          if [[ $PERMISSIONS =~ "workflow" || $PERMISSIONS == "" ]]; then
+            echo "GH_PAT holds workflow permissions or is fine-grained PAT."
+            echo "has_permission=true" >> $GITHUB_OUTPUT # Set WORKFLOW_PERMISSION to false.
+          else  
+            echo "GH_PAT lacks workflow permissions."
+            echo "Automated build features will be skipped!"
+            echo "has_permission=false" >> $GITHUB_OUTPUT # Set WORKFLOW_PERMISSION to false.
+          fi
+
+      - name: Check for alive branches
+        if: steps.workflow-permission.outputs.has_permission == 'true'
+        id: check-alive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          branch_list=$(gh api -H "Accept: application/vnd.github+json" /repos/${{ github.repository_owner }}/Trio/branches | jq -r '.[].name')
       
+          if echo "$branch_list" | grep -q '^alive-main$'; then
+            echo "alive-main exists"
+            echo "ALIVE_MAIN_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "alive-main missing"
+            echo "ALIVE_MAIN_EXISTS=false" >> $GITHUB_ENV
+          fi
+      
+          if echo "$branch_list" | grep -q '^alive-dev$'; then
+            echo "alive-dev exists"
+            echo "ALIVE_DEV_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "alive-dev missing"
+            echo "ALIVE_DEV_EXISTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: Create alive-main branch if missing
+        if: env.ALIVE_MAIN_EXISTS == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          SHA_MAIN=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/main | jq -r '.object.sha')
+      
+          echo "Creating alive-main from upstream main"
+          gh api \
+            --method POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            /repos/${{ github.repository_owner }}/Trio/git/refs \
+            -f ref='refs/heads/alive-main' \
+            -f sha=$SHA_MAIN
+
+      - name: Create alive-dev branch if missing
+        if: env.ALIVE_DEV_EXISTS == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          SHA_DEV=$(curl -sS -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/${{ env.UPSTREAM_REPO }}/git/refs/heads/dev | jq -r '.object.sha')
+      
+          echo "Creating alive-dev from upstream dev"
+          gh api \
+            --method POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            /repos/${{ github.repository_owner }}/Trio/git/refs \
+            -f ref='refs/heads/alive-dev' \
+            -f sha=$SHA_DEV
+              
+  # Checks for changes in upstream repository; if changes exist prompts sync for build
+  # Performs keepalive to avoid stale fork
+  check_latest_from_upstream:
+    needs: [check_certs, check_alive_and_permissions]
+    runs-on: ubuntu-latest
+    name: Check upstream and keep alive
+    outputs:
+      NEW_COMMITS: ${{ steps.sync.outputs.has_new_commits }}
+      ABORT_SYNC: ${{ steps.check_branch.outputs.ABORT_SYNC }}
+
+    steps:
+      - name: Check if running on main or dev branch
+        if: |
+          needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+          (vars.SCHEDULED_BUILD != 'false' || vars.SCHEDULED_SYNC != 'false')
+        id: check_branch
+        run: |
+          if [ "${GITHUB_REF##*/}" = "main" ]; then
+            echo "Running on main branch"
+            echo "ALIVE_BRANCH=${ALIVE_BRANCH_MAIN}" >> $GITHUB_OUTPUT
+            echo "ABORT_SYNC=false" >> $GITHUB_OUTPUT
+          elif [ "${GITHUB_REF##*/}" = "dev" ]; then
+            echo "Running on dev branch"
+            echo "ALIVE_BRANCH=${ALIVE_BRANCH_DEV}" >> $GITHUB_OUTPUT
+            echo "ABORT_SYNC=false" >> $GITHUB_OUTPUT
+          else
+            echo "Not running on main or dev branch"
+            echo "ABORT_SYNC=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout target repo
+        if: |
+          needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+          (vars.SCHEDULED_BUILD != 'false' || vars.SCHEDULED_SYNC != 'false')
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          ref: ${{ steps.check_branch.outputs.ALIVE_BRANCH }}
+
+      - name: Sync upstream changes
+        if: | # do not run the upstream sync action on the upstream repository
+          needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+          vars.SCHEDULED_SYNC != 'false' && github.repository_owner != 'nightscout' && steps.check_branch.outputs.ABORT_SYNC == 'false'
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+        with:
+          target_sync_branch: ${{ steps.check_branch.outputs.ALIVE_BRANCH }}
+          shallow_since: 6 months ago
+          target_repo_token: ${{ secrets.GH_PAT }}
+          upstream_sync_branch: ${{ env.UPSTREAM_BRANCH }}
+          upstream_sync_repo: ${{ env.UPSTREAM_REPO }}
+
+      # ... (Display sync messages and Keep alive steps) ...
+
+      - name: Show value of 'has_new_commits'
+        if: needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' && vars.SCHEDULED_SYNC != 'false' && steps.check_branch.outputs.ABORT_SYNC == 'false'
+        run: |
+          echo ${{ steps.sync.outputs.has_new_commits }}
+          echo "NEW_COMMITS=${{ steps.sync.outputs.has_new_commits }}" >> $GITHUB_OUTPUT
+
+      - name: Keep alive
+        run: |
+          echo "Keep Alive temporarily removed while gautamkrishnar/keepalive-workflow is not available"
+
+      - name: Show scheduled build configuration message
+        if: needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION != 'true'
+        run: |
+          echo "### :calendar: Scheduled Sync and Build Disabled :mobile_phone_off:" >> $GITHUB_STEP_SUMMARY
+          echo "You have not yet configured the scheduled sync and build for Trio's browser build." >> $GITHUB_STEP_SUMMARY
+          echo "Synchronizing your fork of <code>Trio</code> with the upstream repository <code>nightscout/Trio</code> will be skipped." >> $GITHUB_STEP_SUMMARY
+          echo "If you want to enable automatic builds and updates for your Trio, please follow the instructions \
+            under the following path <code>Trio/fastlane/testflight.md</code>." >> $GITHUB_STEP_SUMMARY
+  
+  # Builds Trio
+  build:
+    name: Build
+    needs: [check_certs, check_alive_and_permissions, check_latest_from_upstream]
+    # Set to the requested macos runner version
+    runs-on: macos-15 
+    permissions:
+      contents: write
+    if:
+      | # runs if started manually, or if sync schedule is set and enabled and scheduled on the first Saturday each month, or if sync schedule is set and enabled and new commits were found
+      github.event_name == 'workflow_dispatch' ||
+      (needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+        (vars.SCHEDULED_BUILD != 'false' && github.event.schedule == '0 6 1 * *') ||
+        (vars.SCHEDULED_SYNC != 'false' && needs.check_latest_from_upstream.outputs.NEW_COMMITS == 'true' )
+      )
+    steps:
       - name: Select Xcode version
-        run: sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer
-        # Note: You need to ensure this path is correct for the runner's available Xcode versions.
+        run: "sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer"
+      
+      # --- Sync/Patching Steps (Kept) ---
 
-      - name: Install dependencies
-        run: bundle install
+      - name: Checkout Repo for syncing
+        if: |
+          needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+          vars.SCHEDULED_SYNC != 'false'
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          ref: ${{ env.TARGET_BRANCH }}
 
-      - name: Build IPA (unsigned)
-        run: | # Use a multi-line pipe for complex commands
-          bundle exec fastlane gym \
-            --scheme "Trio" \
-            --workspace "Trio.xcworkspace" \
-            --configuration Release \
-            --export_method ad-hoc \
-            --skip_codesigning true \
-            --output_directory build \
-            --output_name app.ipa
+      - name: Sync upstream changes
+        if: | # do not run the upstream sync action on the upstream repository
+          needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+          vars.SCHEDULED_SYNC != 'false' && github.repository_owner != 'nightscout' && needs.check_latest_from_upstream.outputs.ABORT_SYNC == 'false'
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+        with:
+          target_sync_branch: ${{ env.TARGET_BRANCH }}
+          shallow_since: 6 months ago
+          target_repo_token: ${{ secrets.GH_PAT }}
+          upstream_sync_branch: ${{ env.UPSTREAM_BRANCH }}
+          upstream_sync_repo: ${{ env.UPSTREAM_REPO }}
 
-      - name: Upload Artifact
+      # ... (Display sync messages) ...
+
+      - name: Checkout Repo for building (Includes Submodules)
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          # CRITICAL: Need recursive to clone LoopKit and related dependencies
+          submodules: recursive 
+          ref: ${{ env.TARGET_BRANCH }}
+
+      - name: Customize Trio
+        run: |
+          # ... (rest of the Customize Trio step) ...
+          
+      # --- Dependency Installation (The Fix) ---
+      
+      - name: Install Ruby Gems (Bundler)
+        # Assuming your Gemfile manages Fastlane and CocoaPods
+        run: bundle install 
+      
+      # 🚨 CRITICAL FIX: Run pod install to integrate LoopKit and other dependencies 
+      # and generate the Trio.xcworkspace properly.
+      - name: Install CocoaPods Dependencies
+        run: bundle exec pod install --repo-update
+        
+      # --- Build Steps (Replaces Fastlane) ---
+
+      - name: Sync clock
+        run: sudo sntp -sS time.windows.com
+
+      - name: Xcode Build, Archive, and IPA Export (Unsigned)
+        run: |
+          # 1. Create output directory
+          mkdir -p build-output
+
+          # 2. Archive the project (skipping codesigning)
+          echo "Starting Xcode Archive..."
+          xcodebuild clean archive \
+            -workspace Trio.xcworkspace \
+            -scheme Trio \
+            -configuration Release \
+            -archivePath "build-output/Trio.xcarchive" \
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARIES_FOR_DISTRIBUTION=YES \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
+
+          # 3. Create a minimal ExportOptions.plist to force no codesigning for ad-hoc export
+          echo '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key>
+    <string>ad-hoc</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>stripSwiftSymbols</key>
+    <true/>
+</dict>
+</plist>' > ExportOptions.plist
+
+          # 4. Export the unsigned IPA from the archive
+          echo "Starting IPA Export..."
+          xcodebuild -exportArchive \
+            -archivePath "build-output/Trio.xcarchive" \
+            -exportPath "build-output/ipa" \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -allowUntrustedProvisioning
+
+          # 5. Locate and rename the IPA for artifact upload
+          IPA_NAME=$(find build-output/ipa -name "*.ipa")
+          mv "$IPA_NAME" "build-output/Trio.ipa"
+          echo "✅ Unsigned IPA created at build-output/Trio.ipa"
+      
+      # --- Artifact Upload ---
+
+      # REMOVE: Fastlane upload to TestFlight
+
+      - name: Upload Build artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: built-ipa
-          path: build/app.ipa
-          retention-days: 7 # GitHub Actions uses 'retention-days' instead of 'expire_in' for artifacts
-          
-# The 'artifacts' key is replaced by the 'actions/upload-artifact' step.
+          name: built-ipa-and-logs
+          path: |
+            build-output/Trio.ipa
+            buildlog # Assuming a buildlog file is created (or can be redirected from xcodebuild)
