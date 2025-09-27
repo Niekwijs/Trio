@@ -55,7 +55,7 @@ jobs:
             -configuration Release \
             -archivePath "build-output/Trio.xcarchive" \
             -derivedDataPath $DERIVED_DATA_PATH \
-            -skipUnavailableActions YES \
+            skipUnavailableActions YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
