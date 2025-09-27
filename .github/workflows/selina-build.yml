@@ -37,9 +37,6 @@ jobs:
       - name: Install Ruby Gems (Bundler)
         run: bundle install
 
-      - name: Install CocoaPods (Global)
-        run: sudo gem install cocoapods
-
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
 
@@ -53,7 +50,7 @@ jobs:
 
           echo "Starting Xcode Archive..."
           xcodebuild clean archive \
-            -workspace ios/Trio.xcworkspace \
+            -workspace Trio.xcworkspace \
             -scheme Trio \
             -configuration Release \
             -archivePath "build-output/Trio.xcarchive" \
@@ -64,7 +61,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
 
-          # Create ExportOptions.plist using echo (keeps compatibility)
+          # Create ExportOptions.plist using echo
           echo '<?xml version="1.0" encoding="UTF-8"?>' > ExportOptions.plist
           echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> ExportOptions.plist
           echo '<plist version="1.0">' >> ExportOptions.plist
