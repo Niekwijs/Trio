@@ -55,11 +55,10 @@ jobs:
             -configuration Release \
             -archivePath "build-output/Trio.xcarchive" \
             -derivedDataPath $DERIVED_DATA_PATH \
-            skipUnavailableActions YES \
+            -skipUnavailableActions YES \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             GCC_PREPROCESSOR_DEFINITIONS="DEBUG=0"
-
 
           # Create ExportOptions.plist using echo
           echo '<?xml version="1.0" encoding="UTF-8"?>' > ExportOptions.plist
@@ -81,7 +80,7 @@ jobs:
             -exportPath "build-output/ipa" \
             -exportOptionsPlist ExportOptions.plist \
             -allowProvisioningUpdates \
-            -allowUntrustedProvisioning
+            -allowProvisioningDeviceRegistration
 
           IPA_NAME=$(find build-output/ipa -name "*.ipa")
           if [ -z "$IPA_NAME" ]; then
