@@ -1,3 +1,17 @@
+name: CI/CD Build
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# Your existing variables moved to the environment context for a GitHub Action job
+env:
+  LANG: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
+
 jobs:
   build_ipa: # This is your job's ID
     name: Build IPA
