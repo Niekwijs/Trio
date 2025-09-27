@@ -46,16 +46,11 @@ jobs:
         # Installs gems including fastlane (if still in Gemfile) and CocoaPods
         run: bundle install 
       
+      - name: Install CocoaPods (Global)
+        run: sudo gem install cocoapods
+
       - name: Install CocoaPods Dependencies
-        run: |
-          if bundle exec which pod > /dev/null 2>&1; then
-            echo "Using bundled cocoapods"
-            bundle exec pod install --repo-update
-          else
-            echo "Installing system cocoapods..."
-            sudo gem install cocoapods
-            pod install --repo-update
-          fi
+        run: pod install --repo-update
         
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
