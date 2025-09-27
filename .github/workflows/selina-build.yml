@@ -186,21 +186,21 @@ jobs:
             under the following path <code>Trio/fastlane/testflight.md</code>." >> $GITHUB_STEP_SUMMARY
   
   # Builds Trio
-  build:
-    name: Build
-    needs: [check_certs, check_alive_and_permissions, check_latest_from_upstream]
-    # Set to the requested macos runner version
-    runs-on: macos-15 
-    permissions:
-      contents: write
-    if:
-      | # runs if started manually, or if sync schedule is set and enabled and scheduled on the first Saturday each month, or if sync schedule is set and enabled and new commits were found
-      github.event_name == 'workflow_dispatch' ||
-      (needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
-        (vars.SCHEDULED_BUILD != 'false' && github.event.schedule == '0 6 1 * *') ||
-        (vars.SCHEDULED_SYNC != 'false' && needs.check_latest_from_upstream.outputs.NEW_COMMITS == 'true' )
-      )
-    steps:
+   build:
+    name: Build
+    needs: [check_certs, check_alive_and_permissions, check_latest_from_upstream]
+    runs-on: macos-15
+    permissions:
+      contents: write
+    if:
+      | # runs if started manually, or if sync schedule is set and enabled and scheduled on the first Saturday each month, or if sync schedule is set and enabled and new commits were found
+      github.event_name == 'workflow_dispatch' ||
+      (needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' && 
+# 🚨 Line 281 is likely right here or slightly before/after 🚨
+        (vars.SCHEDULED_BUILD != 'false' && github.event.schedule == '0 6 1 * *') || 
+        (vars.SCHEDULED_SYNC != 'false' && needs.check_latest_from_upstream.outputs.NEW_COMMITS == 'true' )
+      )
+    steps:
       - name: Select Xcode version
         run: "sudo xcode-select --switch /Applications/Xcode_16.3.app/Contents/Developer"
       
